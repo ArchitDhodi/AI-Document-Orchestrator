@@ -158,39 +158,40 @@ st.markdown(
     <style>
         .stApp { background-color: #f3e7d9; }
         
-        /* Headers & Standard Text Orange */
+        /* 1) GENERAL TEXT ORANGE */
         h1, h2, h3, label, .stMarkdown p, .stSubheader { color: #e6682d !important; }
         
-        /* 1) FORCE UPLOADED FILE NAME ORANGE (The "Nuclear" Option) */
-        
-        /* This targets the exact text of the uploaded file */
+        /* 2) RADIO BUTTON TEXT ORANGE (The Fix) */
+        /* This targets the text inside the radio options */
+        div[data-testid="stRadio"] label p {
+            color: #e6682d !important;
+            font-weight: 500; /* Optional: Makes it slightly bolder/readable */
+        }
+
+        /* 3) FORCE UPLOADED FILE NAME ORANGE */
         [data-testid="stFileUploaderFileName"] {
             color: #e6682d !important;
         }
-        
-        /* This targets the small file size text next to it */
         [data-testid="stFileUploaderFileStatus"] {
             color: #e6682d !important;
         }
-        
-        /* Also catch the upload instructions just in case */
         [data-testid="stFileUploader"] section div[data-testid="stFileUploaderDropzoneInstructions"] > div > small {
             color: #e6682d !important;
         }
         
-        /* Force SVG Icons (Paperclip/Cloud) to Orange */
+        /* 4) SVG ICONS (Cloud/Paperclip) */
         [data-testid="stFileUploader"] svg { 
             color: #e6682d !important; 
             fill: #e6682d !important; 
         }
 
-        /* Spinner Text */
+        /* 5) SPINNER TEXT */
         .stSpinner > div > div {
             color: #e6682d !important;
             font-weight: 500;
         }
 
-        /* 2) Status Box Styling (White Card + Left Border) */
+        /* 6) STATUS BOX STYLING */
         .status-box {
             padding: 12px 15px;
             border-radius: 8px;
@@ -206,7 +207,7 @@ st.markdown(
         
         div[data-testid="stVerticalBlock"] > div { gap: 0.5rem; }
         
-        /* 3) Question Card (Black Text Override) */
+        /* 7) QUESTION CARD (Black Text Override) */
         .question-card {
             background: #fff7ef; 
             border: 1px solid #f0e0d2;
@@ -221,7 +222,6 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-
 # --- Layout ---
 left, right = st.columns([0.9, 1.1])
 
