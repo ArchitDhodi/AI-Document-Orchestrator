@@ -25,7 +25,7 @@ except ImportError:
     pdfplumber = None
 
 # --- Page Config ---
-st.set_page_config(page_title="AI Document Orchestrator", layout="wide")
+st.set_page_config(page_title="RiskRadar: AI Document Orchestrator", layout="wide")
 
 # --- Helpers ---
 
@@ -169,7 +169,7 @@ st.markdown("""
 left, right = st.columns([0.9, 1.1])
 
 with left:
-    st.title("AI Document Orchestrator")
+    st.title("RiskRadar: AI Document Orchestrator")
     uploaded = st.file_uploader("Upload PDF or TXT", type=["pdf", "txt"])
 
     # State Management
