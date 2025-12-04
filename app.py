@@ -27,7 +27,6 @@ except ImportError:
 # --- Page Config ---
 st.set_page_config(page_title="AI Document Orchestrator", layout="wide")
 
-
 # --- Helpers ---
 
 def get_secret(name: str):
@@ -39,7 +38,6 @@ def get_secret(name: str):
                 return st.secrets[key]
     return os.environ.get(name)
 
-
 def load_client():
     if genai is None:
         return None
@@ -49,39 +47,36 @@ def load_client():
     genai.configure(api_key=api_key)
     return genai
 
-
 def extract_text(uploaded_file) -> str:
     if uploaded_file is None:
         return ""
     mime = (uploaded_file.type or "").lower()
-    
     if "text" in mime or uploaded_file.name.lower().endswith(".txt"):
         return uploaded_file.getvalue().decode("utf-8", errors="ignore")
-
     if "pdf" in mime or uploaded_file.name.lower().endswith(".pdf"):
         if pdfplumber is None:
-            return "(pdfplumber not installed; cannot parse PDF)"
+            return "(pdfplumber not installed)"
         try:
             with pdfplumber.open(io.BytesIO(uploaded_file.getvalue())) as pdf:
                 pages = [page.extract_text() or "" for page in pdf.pages]
                 return "\n".join(pages)
         except Exception as e:
-            return f"(Error reading PDF: {e})"
+            return f"(Error: {e})"
     return ""
 
-
-def build_schema():
+# --- Schema 1: Standard Invoice Extraction ---
+def build_standard_schema():
     return {
         "type": "object",
         "properties": {
-            "summary": {"type": "string", "description": "A detailed 2-3 sentence summary including Vendor, Key Dates, and Total Amount (with currency symbol)."},
+            "summary": {"type": "string", "description": "Detailed summary with Vendor, Dates, and Total Amount (with currency)."},
             "risk_level": {"type": "string", "description": "High/Medium/Low"},
-            "currency": {"type": "string", "description": "Currency symbol or code (e.g. $, €, ₹)"},
-            "amount": {"type": "number", "description": "Numeric amount in original currency"},
-            "amount_in_usd": {"type": "number", "description": "The amount converted to USD (approximate)"},
+            "currency": {"type": "string", "description": "Currency symbol (e.g. $, €, ₹)"},
+            "amount": {"type": "number", "description": "Numeric amount"},
+            "amount_in_usd": {"type": "number", "description": "Approx USD value"},
             "insights": {
                 "type": "array",
-                "description": "Top 4 key insights. If user asks a question, include the answer here.",
+                "description": "Top 4 key insights (Vendor, Invoice No, Due Date, Total)",
                 "items": {
                     "type": "object",
                     "properties": {
@@ -95,288 +90,174 @@ def build_schema():
         "required": ["summary", "insights", "risk_level", "amount", "currency", "amount_in_usd"]
     }
 
-
-def demo_extraction(question: str):
+# --- Schema 2: Specific Question Answer ---
+def build_qa_schema():
     return {
-        "summary": "(DEMO) API Key missing. Showing placeholder.",
-        "risk_level": "High",
-        "currency": "$",
-        "amount": 12500.0,
-        "amount_in_usd": 12500.0,
-        "insights": [
-            {"field": "question", "value": question or "Example"},
-            {"field": "demo_note", "value": "Configure GEMINI_API_KEY to see real data"}
-        ]
+        "type": "object",
+        "properties": {
+            "question": {"type": "string"},
+            "answer": {"type": "string", "description": "Direct answer to the user's question."},
+            "evidence": {"type": "string", "description": "Quote from document supporting the answer."}
+        },
+        "required": ["question", "answer", "evidence"]
     }
 
+def call_gemini_standard(_client, text):
+    prompt = (
+        "You are an expert document analyst. Perform a standard extraction.\n"
+        "1. **Summary**: Detailed summary with Vendor, Purpose, and Dates. Include Currency Symbol in text.\n"
+        "2. **Insights**: Extract Top 4 critical fields (Vendor, Invoice #, Due Date, Total).\n"
+        "3. **Financials**: Extract Amount, Currency, and convert to USD approx.\n"
+        "4. **Risk**: High/Medium/Low.\n"
+        "Return strictly valid JSON."
+    )
+    return _generate(_client, text, prompt, build_standard_schema())
 
-def call_gemini(_client, text: str, question: str):
-    if genai is None:
-        st.error("google-generativeai library is not installed.")
-        return demo_extraction(question)
-        
-    api_key = get_secret("GEMINI_API_KEY")
-    if not api_key:
-        st.warning("GEMINI_API_KEY not found in secrets.")
-        return demo_extraction(question)
+def call_gemini_qa(_client, text, question):
+    prompt = (
+        f"You are a helpful assistant. The user has asked: '{question}'\n"
+        "Answer the question based ONLY on the document provided.\n"
+        "Return strictly valid JSON."
+    )
+    return _generate(_client, text, prompt, build_qa_schema())
 
-    if not text.strip():
-        st.error("No text extracted from the document.")
+def _generate(_client, text, prompt, schema):
+    if not _client: return None
+    try:
+        model = _client.GenerativeModel("gemini-2.0-flash")
+        resp = model.generate_content(
+            [prompt, f"Document Text:\n{text}"],
+            generation_config=genai.types.GenerationConfig(
+                response_mime_type="application/json",
+                response_schema=schema,
+                temperature=0
+            )
+        )
+        return json.loads(resp.text) if resp.text else None
+    except Exception as e:
+        st.error(f"AI Error: {e}")
         return None
 
-    # FIX: Updated Prompt to Prioritize the User's Question
-    prompt = (
-        "You are an expert document analyst. Extract a comprehensive structured summary. "
-        "1. **Summary**: Write a detailed summary identifying Vendor, Purpose, and Dates. "
-        "   **IMPORTANT**: When mentioning the Total Amount in the summary, YOU MUST include the currency symbol (e.g. 'Total due is $500' or '₹500'). "
-        "2. **Insights**: Extract exactly **4 fields**. "
-        "   **CRITICAL INSTRUCTION**: Look at the 'Question' provided below. **You MUST include the answer to that specific question as one of the 4 insights.** "
-        "   (For example, if the user asks 'What is the IBAN?', one insight must be 'IBAN'. If no specific question is asked, default to Invoice No, Vendor, Due Date, PO #). "
-        "3. **Currency**: Identify the currency symbol. "
-        "4. **Amount**: Extract the total numeric amount. "
-        "5. **USD Conversion**: If not in USD, convert to USD approx. "
-        "6. **Risk**: Assess Risk Level (High/Medium/Low). "
-        "Return strictly valid JSON matching the provided schema."
-    )
-    
-    model_name = "gemini-2.0-flash"
-
+def send_to_n8n(n8n_url, text, json_data, recipient):
+    if not n8n_url: return {"status": "Simulated", "final_answer": "Demo Answer", "email_body": "Demo Body"}
     try:
-        model = genai.GenerativeModel(model_name)
-        generation_config = genai.types.GenerationConfig(
-            response_mime_type="application/json",
-            response_schema=build_schema(),
-            temperature=0,
-        )
-
-        response = model.generate_content(
-            [prompt, f"Question: {question}", f"Document Text:\n{text}"],
-            generation_config=generation_config,
-        )
-        
-        if response.text:
-            return json.loads(response.text)
-            
-    except Exception as e:
-        st.error(f"Gemini API Error: {str(e)}")
-        if "404" in str(e):
-            st.error(f"Model '{model_name}' not found. Check your API Key tier.")
-            
-    return demo_extraction(question)
-
-
-def send_to_n8n(n8n_url: str, text: str, extracted_json: dict, question: str, recipient: str):
-    if not n8n_url:
-        st.info("Demo mode: N8N_WEBHOOK_URL missing.")
-        return {"status": "Simulated Sent"}
-
-    payload = {
-        "text": text,
-        "extracted_json": extracted_json,
-        "question": question,
-        "recipient_email": recipient,
-    }
-    
-    try:
-        resp = requests.post(n8n_url, json=payload, timeout=30)
+        resp = requests.post(n8n_url, json={
+            "text": text,
+            "extracted_json": json_data,
+            "recipient_email": recipient
+        }, timeout=30)
         resp.raise_for_status()
         return resp.json()
-    except Exception as exc:
-        st.error(f"n8n call failed: {exc}")
+    except Exception as e:
+        st.error(f"n8n Error: {e}")
         return None
 
-
-# --- UI ---
-
-st.markdown(
-    """
+# --- UI Styling ---
+st.markdown("""
     <style>
-        .stApp { background-color: #f3e7d9; }
-        
-        h1, h2, h3, label, .stMarkdown p, .stSubheader { color: #e6682d !important; }
-        
-        [data-testid="stFileUploader"] section div[data-testid="stFileUploaderDropzoneInstructions"] > div > small,
-        [data-testid="stFileUploader"] div > div > small, 
-        .uploadedFileName,
-        [data-testid="stFileUploader"] div[data-testid="stFileUploaderFileName"] {
-            color: #e6682d !important;
-        }
-
-        .stSpinner > div > div {
-            color: #e6682d !important;
-            font-weight: 500;
-        }
-
-        .status-box {
-            padding: 12px 15px;
-            border-radius: 8px;
-            margin: 10px 0;
-            background-color: #ffffff;
-            border-left: 5px solid;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-            color: #333 !important;
-        }
-        .status-success { border-left-color: #28a745; }
-        .status-warning { border-left-color: #ffc107; }
-        .status-info    { border-left-color: #17a2b8; }
-        
-        div[data-testid="stVerticalBlock"] > div { gap: 0.5rem; }
-        
-        .question-card {
-            background: #fff7ef; 
-            border: 1px solid #f0e0d2;
-            padding: 12px; 
-            border-radius: 10px; 
-            margin-bottom: 20px;
-        }
-        .question-card, .question-card strong, .question-card div {
-            color: #000000 !important;
-        }
-        
-        [data-testid="stFileUploader"] svg { color: #e6682d !important; }
+    .stApp { background-color: #f3e7d9; }
+    h1, h2, h3, label, p, .stSubheader { color: #e6682d !important; }
+    .status-box { padding: 12px; border-radius: 8px; margin: 10px 0; background: #fff; border-left: 5px solid; color: #333 !important; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    .status-success { border-left-color: #28a745; }
+    .qa-box { background: #fff; padding: 20px; border-radius: 10px; border-left: 5px solid #e6682d; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+    .uploadedFileName, [data-testid="stFileUploader"] small { color: #e6682d !important; }
+    .stSpinner > div > div { color: #e6682d !important; }
     </style>
-    """,
-    unsafe_allow_html=True,
-)
+""", unsafe_allow_html=True)
 
+# --- Layout ---
 left, right = st.columns([0.9, 1.1])
 
-# --- LEFT COLUMN ---
 with left:
     st.title("AI Document Orchestrator")
-    st.markdown("Upload a PDF/TXT, extract structured data with Gemini, then trigger an n8n alert.")
-
     uploaded = st.file_uploader("Upload PDF or TXT", type=["pdf", "txt"])
-    
-    # REQUIREMENT CHECK #1: User Question Input
-    question = st.text_input(
-        "Ask a specific question about the document:",
-        value="Extract key invoice details including dates, amounts, and vendor info."
-    )
-    
-    st.markdown(
-        """
-        <div class="question-card">
-            <strong>Target Extraction (Top 4):</strong><br>
-            &bull; Vendor Name<br>
-            &bull; Invoice Number<br>
-            &bull; Due Date<br>
-            &bull; Total Amount (USD)
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
 
-    if "extracted_json" not in st.session_state:
-        st.session_state.extracted_json = None
-    if "extracted_text" not in st.session_state:
-        st.session_state.extracted_text = ""
-    if "last_file" not in st.session_state:
-        st.session_state.last_file = None
+    # State Management
+    if "std_result" not in st.session_state: st.session_state.std_result = None
+    if "qa_result" not in st.session_state: st.session_state.qa_result = None
+    if "last_file" not in st.session_state: st.session_state.last_file = None
+    if "extracted_text" not in st.session_state: st.session_state.extracted_text = ""
 
+    # File Processing
     if uploaded:
-        current_text = extract_text(uploaded)
+        text = extract_text(uploaded)
+        # Reset if new file
         if st.session_state.last_file != uploaded.name:
-            st.session_state.extracted_text = current_text
+            st.session_state.extracted_text = text
             st.session_state.last_file = uploaded.name
-            
+            st.session_state.std_result = None
+            st.session_state.qa_result = None
+            # Auto-run standard analysis on upload
             client = load_client()
-            with st.spinner("Analyzing document with Gemini..."):
-                st.session_state.extracted_json = call_gemini(client, current_text, question)
-        
-        if st.session_state.extracted_json:
-            st.markdown(
-                '<div class="status-box status-success">✅ Extraction Complete</div>', 
-                unsafe_allow_html=True
-            )
+            with st.spinner("Analyzing document..."):
+                st.session_state.std_result = call_gemini_standard(client, text)
 
-    if uploaded and st.button("Re-run Analysis", type="primary"):
-        client = load_client()
-        with st.spinner("Re-analyzing..."):
-            st.session_state.extracted_json = call_gemini(
-                client, st.session_state.extracted_text, question
-            )
+    # MODE SELECTION (Radio Button)
+    mode = st.radio("Choose Action:", ["Standard Analysis", "Ask Specific Question"])
 
-    # Status & Alerts
-    if st.session_state.extracted_json:
-        data = st.session_state.extracted_json
-        
-        risk = data.get("risk_level", "Low")
-        amount = data.get("amount", 0)
-        currency = data.get("currency", "$")
-        amount_in_usd = data.get("amount_in_usd", 0)
-        
-        is_high_risk = risk == "High"
-        is_high_value = isinstance(amount_in_usd, (int, float)) and amount_in_usd > 500
-        
-        st.write("") 
-        
-        if is_high_risk or is_high_value:
-            st.subheader(f"⚠️ Action Required")
-            st.markdown(f"**Reason:** {risk} Risk / Amount > $500")
-            
-            recipient = st.text_input("Recipient email")
-            
-            if st.button("Send Alert to n8n", disabled=not recipient):
-                n8n_url = get_secret("N8N_WEBHOOK_URL")
-                with st.spinner("Triggering workflow..."):
-                    resp = send_to_n8n(
-                        n8n_url, 
-                        st.session_state.extracted_text, 
-                        st.session_state.extracted_json, 
-                        question, 
-                        recipient
-                    )
-                if resp:
-                    # REQUIREMENT CHECK #4: Display n8n response details
-                    st.markdown(
-                        f'<div class="status-box status-success">🚀 Alert Status: {resp.get("status", "Sent")}</div>', 
-                        unsafe_allow_html=True
-                    )
-                    
-                    with st.expander("View Automation Details", expanded=True):
-                        st.markdown(f"**Final Analytical Answer:**\n\n{resp.get('final_answer', 'N/A')}")
-                        st.divider()
-                        st.markdown(f"**Generated Email Body:**\n\n{resp.get('email_body', 'N/A')}")
-
-        else:
-            st.markdown(
-                f"""
-                <div class="status-box status-success">
-                    <div style="font-weight: 600; font-size: 1.05em;">✅ No Action Needed</div>
-                    <div style="font-size: 0.9em; color: #555; margin-top: 4px;">
-                        Risk: {risk} &bull; Amount: {currency}{amount} (${amount_in_usd:.2f})
-                    </div>
-                </div>
-                """, 
-                unsafe_allow_html=True
-            )
-            
-            st.markdown(
-                """
-                <div class="status-box status-info">
-                    ℹ️ Note: Email alerts are only triggered for High Risk or amounts over $500 USD.
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-# --- RIGHT COLUMN ---
-with right:
-    st.subheader("Analysis Results")
-    if st.session_state.extracted_json:
-        st.json(st.session_state.extracted_json)
-    else:
-        st.markdown(
-            """
-            <div style="
-                border: 2px dashed #f0e0d2; 
-                padding: 40px; 
-                border-radius: 10px; 
-                text-align: center; 
-                color: #e6682d;">
-                Waiting for document...
+    if mode == "Standard Analysis":
+        st.markdown("""
+            <div style="background:#fff7ef; border:1px solid #f0e0d2; padding:12px; border-radius:10px; color:black;">
+                <strong>Standard Extraction:</strong><br>&bull; Summary & Risk<br>&bull; Top 4 Insights<br>&bull; Financials
             </div>
-            """, 
-            unsafe_allow_html=True
-        )
+        """, unsafe_allow_html=True)
+
+        # Logic for Alerts (Only in Standard Mode)
+        if st.session_state.std_result:
+            data = st.session_state.std_result
+            st.markdown('<div class="status-box status-success">✅ Analysis Loaded</div>', unsafe_allow_html=True)
+            
+            # Risk Logic
+            risk = data.get("risk_level", "Low")
+            usd = data.get("amount_in_usd", 0)
+            is_alert = risk == "High" or (isinstance(usd, (int, float)) and usd > 500)
+            
+            st.write("")
+            if is_alert:
+                st.subheader("⚠️ Action Required")
+                st.markdown(f"**Reason:** {risk} Risk / Amount > $500")
+                email = st.text_input("Recipient Email")
+                if st.button("Send Alert Mail", disabled=not email):
+                    with st.spinner("Sending to n8n..."):
+                        resp = send_to_n8n(get_secret("N8N_WEBHOOK_URL"), st.session_state.extracted_text, data, email)
+                    if resp:
+                        st.markdown(f'<div class="status-box status-success">🚀 Status: {resp.get("status", "Sent")}</div>', unsafe_allow_html=True)
+                        with st.expander("View Automation Details (JSON)", expanded=True):
+                            st.json(resp) # Shows full JSON including email_body
+            else:
+                 st.markdown(f'<div class="status-box status-success">✅ No Action Needed<br><small>Risk: {risk} | USD: ${usd:.2f}</small></div>', unsafe_allow_html=True)
+
+    elif mode == "Ask Specific Question":
+        # Callback to run on Enter
+        def run_qa():
+            if st.session_state.user_q:
+                client = load_client()
+                with st.spinner("Thinking..."):
+                    st.session_state.qa_result = call_gemini_qa(client, st.session_state.extracted_text, st.session_state.user_q)
+
+        st.text_input("Type your question and press Enter:", key="user_q", on_change=run_qa)
+
+with right:
+    # Right column changes based on mode
+    if mode == "Standard Analysis":
+        st.subheader("Analysis Results")
+        if st.session_state.std_result:
+            st.json(st.session_state.std_result)
+        else:
+            st.info("Upload a file to see results.")
+            
+    elif mode == "Ask Specific Question":
+        st.subheader("AI Answer")
+        if st.session_state.qa_result:
+            # Display QA nicely
+            res = st.session_state.qa_result
+            st.markdown(f"""
+                <div class="qa-box">
+                    <h4 style="color:#e6682d; margin-top:0;">Q: {res.get('question')}</h4>
+                    <p style="font-size:1.1em; color:#333;"><strong>A:</strong> {res.get('answer')}</p>
+                    <hr>
+                    <p style="color:#666; font-size:0.9em;"><em>Source: "{res.get('evidence')}"</em></p>
+                </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.info("Ask a question on the left to see the answer here.")
