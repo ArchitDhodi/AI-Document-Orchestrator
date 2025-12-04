@@ -153,17 +153,74 @@ def send_to_n8n(n8n_url, text, json_data, recipient):
         return None
 
 # --- UI Styling ---
-st.markdown("""
+st.markdown(
+    """
     <style>
-    .stApp { background-color: #f3e7d9; }
-    h1, h2, h3, label, p, .stSubheader { color: #e6682d !important; }
-    .status-box { padding: 12px; border-radius: 8px; margin: 10px 0; background: #fff; border-left: 5px solid; color: #333 !important; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-    .status-success { border-left-color: #28a745; }
-    .qa-box { background: #fff; padding: 20px; border-radius: 10px; border-left: 5px solid #e6682d; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
-    .uploadedFileName, [data-testid="stFileUploader"] small { color: #e6682d !important; }
-    .stSpinner > div > div { color: #e6682d !important; }
+        .stApp { background-color: #f3e7d9; }
+        
+        /* Headers & Standard Text Orange */
+        h1, h2, h3, label, .stMarkdown p, .stSubheader { color: #e6682d !important; }
+        
+        /* 1) FORCE UPLOADED FILE NAME ORANGE (The "Nuclear" Option) */
+        
+        /* This targets the exact text of the uploaded file */
+        [data-testid="stFileUploaderFileName"] {
+            color: #e6682d !important;
+        }
+        
+        /* This targets the small file size text next to it */
+        [data-testid="stFileUploaderFileStatus"] {
+            color: #e6682d !important;
+        }
+        
+        /* Also catch the upload instructions just in case */
+        [data-testid="stFileUploader"] section div[data-testid="stFileUploaderDropzoneInstructions"] > div > small {
+            color: #e6682d !important;
+        }
+        
+        /* Force SVG Icons (Paperclip/Cloud) to Orange */
+        [data-testid="stFileUploader"] svg { 
+            color: #e6682d !important; 
+            fill: #e6682d !important; 
+        }
+
+        /* Spinner Text */
+        .stSpinner > div > div {
+            color: #e6682d !important;
+            font-weight: 500;
+        }
+
+        /* 2) Status Box Styling (White Card + Left Border) */
+        .status-box {
+            padding: 12px 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+            background-color: #ffffff;
+            border-left: 5px solid;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            color: #333 !important;
+        }
+        .status-success { border-left-color: #28a745; }
+        .status-warning { border-left-color: #ffc107; }
+        .status-info    { border-left-color: #17a2b8; }
+        
+        div[data-testid="stVerticalBlock"] > div { gap: 0.5rem; }
+        
+        /* 3) Question Card (Black Text Override) */
+        .question-card {
+            background: #fff7ef; 
+            border: 1px solid #f0e0d2;
+            padding: 12px; 
+            border-radius: 10px; 
+            margin-bottom: 20px;
+        }
+        .question-card, .question-card strong, .question-card div {
+            color: #000000 !important;
+        }
     </style>
-""", unsafe_allow_html=True)
+    """,
+    unsafe_allow_html=True,
+)
 
 # --- Layout ---
 left, right = st.columns([0.9, 1.1])
