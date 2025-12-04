@@ -81,7 +81,7 @@ def build_schema():
             "amount_in_usd": {"type": "number", "description": "The amount converted to USD (approximate)"},
             "insights": {
                 "type": "array",
-                "description": "Top 4 key insights only (e.g. Vendor, Invoice No, Due Date, PO No)",
+                "description": "Top 4 key insights. If user asks a question, include the answer here.",
                 "items": {
                     "type": "object",
                     "properties": {
@@ -124,12 +124,14 @@ def call_gemini(_client, text: str, question: str):
         st.error("No text extracted from the document.")
         return None
 
-    # Prompt: Forces currency in summary + Top 4 insights
+    # FIX: Updated Prompt to Prioritize the User's Question
     prompt = (
         "You are an expert document analyst. Extract a comprehensive structured summary. "
         "1. **Summary**: Write a detailed summary identifying Vendor, Purpose, and Dates. "
         "   **IMPORTANT**: When mentioning the Total Amount in the summary, YOU MUST include the currency symbol (e.g. 'Total due is $500' or '₹500'). "
-        "2. **Insights**: Extract exactly the **Top 4** most critical fields (e.g., Invoice No, Vendor, Due Date, PO #). "
+        "2. **Insights**: Extract exactly **4 fields**. "
+        "   **CRITICAL INSTRUCTION**: Look at the 'Question' provided below. **You MUST include the answer to that specific question as one of the 4 insights.** "
+        "   (For example, if the user asks 'What is the IBAN?', one insight must be 'IBAN'. If no specific question is asked, default to Invoice No, Vendor, Due Date, PO #). "
         "3. **Currency**: Identify the currency symbol. "
         "4. **Amount**: Extract the total numeric amount. "
         "5. **USD Conversion**: If not in USD, convert to USD approx. "
@@ -195,12 +197,9 @@ st.markdown(
         
         [data-testid="stFileUploader"] section div[data-testid="stFileUploaderDropzoneInstructions"] > div > small,
         [data-testid="stFileUploader"] div > div > small, 
-        .uploadedFileName {
-            color: #e6682d !important;
-        }
-        
+        .uploadedFileName,
         [data-testid="stFileUploader"] div[data-testid="stFileUploaderFileName"] {
-             color: #e6682d !important;
+            color: #e6682d !important;
         }
 
         .stSpinner > div > div {
@@ -249,13 +248,12 @@ with left:
 
     uploaded = st.file_uploader("Upload PDF or TXT", type=["pdf", "txt"])
     
-    # REQUIREMENT CHECK #1: Text Input for User Question
+    # REQUIREMENT CHECK #1: User Question Input
     question = st.text_input(
         "Ask a specific question about the document:",
         value="Extract key invoice details including dates, amounts, and vendor info."
     )
     
-    # Target Box with Black Text
     st.markdown(
         """
         <div class="question-card">
@@ -286,7 +284,6 @@ with left:
             with st.spinner("Analyzing document with Gemini..."):
                 st.session_state.extracted_json = call_gemini(client, current_text, question)
         
-        # Extraction Complete Message
         if st.session_state.extracted_json:
             st.markdown(
                 '<div class="status-box status-success">✅ Extraction Complete</div>', 
@@ -315,7 +312,6 @@ with left:
         st.write("") 
         
         if is_high_risk or is_high_value:
-            # High Risk Alert
             st.subheader(f"⚠️ Action Required")
             st.markdown(f"**Reason:** {risk} Risk / Amount > $500")
             
@@ -332,7 +328,7 @@ with left:
                         recipient
                     )
                 if resp:
-                    # REQUIREMENT CHECK #4: Display all n8n outputs
+                    # REQUIREMENT CHECK #4: Display n8n response details
                     st.markdown(
                         f'<div class="status-box status-success">🚀 Alert Status: {resp.get("status", "Sent")}</div>', 
                         unsafe_allow_html=True
@@ -344,7 +340,6 @@ with left:
                         st.markdown(f"**Generated Email Body:**\n\n{resp.get('email_body', 'N/A')}")
 
         else:
-            # No Action Needed
             st.markdown(
                 f"""
                 <div class="status-box status-success">
