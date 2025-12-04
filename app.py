@@ -74,7 +74,7 @@ def build_schema():
     return {
         "type": "object",
         "properties": {
-            "summary": {"type": "string", "description": "A detailed 2-3 sentence summary including Vendor, Key Dates, and Main Items."},
+            "summary": {"type": "string", "description": "A detailed 2-3 sentence summary including Vendor, Key Dates, and Total Amount (with currency symbol)."},
             "risk_level": {"type": "string", "description": "High/Medium/Low"},
             "currency": {"type": "string", "description": "Currency symbol or code (e.g. $, €, ₹)"},
             "amount": {"type": "number", "description": "Numeric amount in original currency"},
@@ -124,9 +124,11 @@ def call_gemini(_client, text: str, question: str):
         st.error("No text extracted from the document.")
         return None
 
+    # Prompt: Forces currency in summary + Top 4 insights
     prompt = (
         "You are an expert document analyst. Extract a comprehensive structured summary. "
         "1. **Summary**: Write a detailed summary identifying Vendor, Purpose, and Dates. "
+        "   **IMPORTANT**: When mentioning the Total Amount in the summary, YOU MUST include the currency symbol (e.g. 'Total due is $500' or '₹500'). "
         "2. **Insights**: Extract exactly the **Top 4** most critical fields (e.g., Invoice No, Vendor, Due Date, PO #). "
         "3. **Currency**: Identify the currency symbol. "
         "4. **Amount**: Extract the total numeric amount. "
@@ -189,30 +191,23 @@ st.markdown(
     <style>
         .stApp { background-color: #f3e7d9; }
         
-        /* Headers & Standard Text Orange */
         h1, h2, h3, label, .stMarkdown p, .stSubheader { color: #e6682d !important; }
         
-        /* 1) FORCE UPLOADED FILE NAME ORANGE (Detailed Selectors) */
-        
-        /* Target the small text (file size/name) */
         [data-testid="stFileUploader"] section div[data-testid="stFileUploaderDropzoneInstructions"] > div > small,
         [data-testid="stFileUploader"] div > div > small, 
         .uploadedFileName {
             color: #e6682d !important;
         }
         
-        /* Target the actual filename display after upload */
         [data-testid="stFileUploader"] div[data-testid="stFileUploaderFileName"] {
              color: #e6682d !important;
         }
 
-        /* Spinner Text */
         .stSpinner > div > div {
             color: #e6682d !important;
             font-weight: 500;
         }
 
-        /* 2) Status Box Styling (White Card + Left Border) */
         .status-box {
             padding: 12px 15px;
             border-radius: 8px;
@@ -226,10 +221,8 @@ st.markdown(
         .status-warning { border-left-color: #ffc107; }
         .status-info    { border-left-color: #17a2b8; }
         
-        /* Remove Gap */
         div[data-testid="stVerticalBlock"] > div { gap: 0.5rem; }
         
-        /* 3) Question Card (Black Text Override) */
         .question-card {
             background: #fff7ef; 
             border: 1px solid #f0e0d2;
@@ -247,7 +240,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# 4) Layout 0.9 : 1.1
 left, right = st.columns([0.9, 1.1])
 
 # --- LEFT COLUMN ---
@@ -257,7 +249,11 @@ with left:
 
     uploaded = st.file_uploader("Upload PDF or TXT", type=["pdf", "txt"])
     
-    question = "Extract key invoice details including dates, amounts, and vendor info."
+    # REQUIREMENT CHECK #1: Text Input for User Question
+    question = st.text_input(
+        "Ask a specific question about the document:",
+        value="Extract key invoice details including dates, amounts, and vendor info."
+    )
     
     # Target Box with Black Text
     st.markdown(
@@ -290,7 +286,7 @@ with left:
             with st.spinner("Analyzing document with Gemini..."):
                 st.session_state.extracted_json = call_gemini(client, current_text, question)
         
-        # Extraction Complete
+        # Extraction Complete Message
         if st.session_state.extracted_json:
             st.markdown(
                 '<div class="status-box status-success">✅ Extraction Complete</div>', 
@@ -336,10 +332,17 @@ with left:
                         recipient
                     )
                 if resp:
+                    # REQUIREMENT CHECK #4: Display all n8n outputs
                     st.markdown(
-                        '<div class="status-box status-success">🚀 Alert triggered successfully</div>', 
+                        f'<div class="status-box status-success">🚀 Alert Status: {resp.get("status", "Sent")}</div>', 
                         unsafe_allow_html=True
                     )
+                    
+                    with st.expander("View Automation Details", expanded=True):
+                        st.markdown(f"**Final Analytical Answer:**\n\n{resp.get('final_answer', 'N/A')}")
+                        st.divider()
+                        st.markdown(f"**Generated Email Body:**\n\n{resp.get('email_body', 'N/A')}")
+
         else:
             # No Action Needed
             st.markdown(
