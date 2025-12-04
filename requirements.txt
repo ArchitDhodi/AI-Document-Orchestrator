@@ -1,0 +1,5 @@
+streamlit>=1.30.0
+requests
+pdfplumber
+google-generativeai>=0.7.2
+tomli; python_version < "3.11"
